@@ -33,7 +33,7 @@ import { setDockviewApi, ensureBoardPanel, boardPanelId, isRedockingPdf } from '
 import { boardStore } from './store/board-store';
 import { useBoardStore } from './hooks/useBoardStore';
 import { pdfStore } from './store/pdf-store';
-import { openPdfFiles } from './store/file-actions';
+import { openPdfFiles, openDeepLink } from './store/file-actions';
 import { saveDroppedToIncoming } from './store/incoming-upload';
 import { isElectron } from './store/databank-store';
 import { isLiteBuild } from './store/build-mode';
@@ -134,6 +134,14 @@ function App() {
   // triggered the load. See databank-store.ts:_runStartupLoad.
   useEffect(() => {
     void databankStore.ensureLoaded();
+  }, []);
+
+  // Deeplink: `/?board=<board_key>&net=<net_name>` opens a library board and
+  // highlights a net on mount (Block A1 Step 3 — see
+  // docs/assistant/reports/boardripper-contract.md). No-op when `board` is
+  // absent; failures surface as toasts, not a blank screen.
+  useEffect(() => {
+    void openDeepLink(window.location.search);
   }, []);
 
   // One-time post-update notice: Text fast mode was force-enabled by the

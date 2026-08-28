@@ -4,6 +4,7 @@ import { databankStore, type DatabankFile } from './databank-store';
 import { ensurePdfPanel, ensureBoardPanel } from './dockview-api';
 import { loadBoardWithAscSiblings } from './asc-open';
 import { log } from './log-store';
+import type { Net } from '../parsers/types';
 
 /**
  * Open one or more PDF files: register, auto-bind, load into pdf.js, create panels.
@@ -133,4 +134,97 @@ export async function openLibraryFileById(
   // the tab after the board, not after the section that was asked for.
   const opened = file.file_type === 'board' ? boardStore.activeTab?.fileName : undefined;
   return { name: opened ?? fileObj.name, file_type: file.file_type };
+}
+
+/** Fold case and `_`/`-`/whitespace differences so a URL-typed net name
+ *  matches the board's parsed net string. BoardRipper itself does no such
+ *  normalization (nothing upstream compares two net-name spellings) — this
+ *  is deeplink-local, per ARCHITECTURE.md's normalization rule. */
+function normalizeNetKey(name: string): string {
+  return name.trim().toUpperCase().replace(/[_\-\s]+/g, '_');
+}
+
+/** Resolve a requested net name against a board's net registry. An
+ *  unambiguous case/separator-insensitive match wins; a name matching more
+ *  than one distinct net spelling is an error, never "take the first". */
+function resolveNetName(
+  nets: Map<string, Net>,
+  requested: string,
+):
+  | { ok: true; name: string }
+  | { ok: false; reason: 'not-found' }
+  | { ok: false; reason: 'ambiguous'; candidates: string[] } {
+  const target = normalizeNetKey(requested);
+  const candidates: string[] = [];
+  for (const name of nets.keys()) {
+    if (normalizeNetKey(name) === target) candidates.push(name);
+  }
+  if (candidates.length === 0) return { ok: false, reason: 'not-found' };
+  if (candidates.length > 1) return { ok: false, reason: 'ambiguous', candidates };
+  return { ok: true, name: candidates[0] };
+}
+
+/** Deeplink entry point for `/?board=<board_key>&net=<net_name>` (Block A1
+ *  Step 3, see docs/assistant/reports/boardripper-contract.md — Option B).
+ *  Resolves `board_key` via the catalog's `manufacturer` field the same way
+ *  the databank UI does, opens the board through the existing open-by-id
+ *  path, then highlights the net through the existing `highlightNet` — no
+ *  duplicated open/highlight logic. A no-op when `board` is absent. Every
+ *  failure mode (unknown board, ambiguous boardview file, unknown or
+ *  ambiguous net) surfaces as an explicit toast naming what was requested,
+ *  never a silent blank screen. */
+export async function openDeepLink(search: string): Promise<void> {
+  const params = new URLSearchParams(search);
+  const boardKey = params.get('board');
+  if (!boardKey) return;
+  const netName = params.get('net');
+
+  const files = await databankStore.filesByBoardKey(boardKey);
+  if (files === null) {
+    boardStore.addToast(`Deeplink: could not reach the library backend to resolve board "${boardKey}".`);
+    return;
+  }
+  if (files.length === 0) {
+    boardStore.addToast(`Deeplink: no board file found for board "${boardKey}".`);
+    return;
+  }
+  if (files.length > 1) {
+    const names = files.map((f) => f.filename).join(', ');
+    boardStore.addToast(
+      `Deeplink: board "${boardKey}" has ${files.length} boardview files (${names}) — pick one manually.`,
+    );
+    return;
+  }
+
+  let opened: { name: string; file_type: string };
+  try {
+    opened = await openLibraryFileById(files[0].id);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    boardStore.addToast(`Deeplink: failed to open board "${boardKey}": ${msg}`);
+    return;
+  }
+
+  if (!netName) return;
+
+  const board = boardStore.activeTab?.board;
+  if (!board) {
+    boardStore.addToast(
+      `Deeplink: board "${boardKey}" opened as "${opened.name}" but has no net data — cannot highlight net "${netName}".`,
+    );
+    return;
+  }
+
+  const resolved = resolveNetName(board.nets, netName);
+  if (!resolved.ok) {
+    if (resolved.reason === 'ambiguous') {
+      boardStore.addToast(
+        `Deeplink: net "${netName}" is ambiguous on board "${boardKey}" — matches ${resolved.candidates.join(', ')}.`,
+      );
+    } else {
+      boardStore.addToast(`Deeplink: net "${netName}" not found on board "${boardKey}".`);
+    }
+    return;
+  }
+  boardStore.highlightNet(resolved.name);
 }

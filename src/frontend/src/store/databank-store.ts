@@ -1290,6 +1290,36 @@ class DatabankStore extends Emitter {
     return out;
   }
 
+  /** Resolve a catalog board_key (the library directory name) to its
+   *  boardview file rows, WITHOUT requiring the full library list to be
+   *  loaded first — used by the `?board=` deeplink (openDeepLink in
+   *  file-actions.ts) to resolve a code straight off a stateless request.
+   *  `type=board` is the server's actual filter param name (not
+   *  `file_type`, despite the JSON field name).
+   *
+   *  Two-tier lookup, verified live against rilya-server: for a
+   *  `resolution_status: "pattern_matched"` board (e.g. `051-7845`) the
+   *  `manufacturer` field still holds the board_key, so
+   *  `?manufacturer=<key>&type=board` finds it directly. But once a board
+   *  is catalog-`resolved` (e.g. `820-01700`), `manufacturer` is
+   *  overwritten with the resolved brand ("Apple") and the board_key only
+   *  survives in `board_number` / the file's own directory — the
+   *  manufacturer-filtered query silently returns [] for those, which is
+   *  NOT "board not found". Falls back to scanning the unfiltered
+   *  `type=board` list (~500 rows / ~220 KB on the live library) and
+   *  matching `board_number` or the path's leading directory segment.
+   *  Returns null (not []) when the backend can't be reached at all, so the
+   *  caller can tell "no such board" apart from "server unreachable". */
+  async filesByBoardKey(boardKey: string): Promise<DatabankFile[] | null> {
+    const params = new URLSearchParams({ manufacturer: boardKey, type: 'board' });
+    const byManufacturer = await this.apiFetch<DatabankFile[]>(`/api/databank/files?${params}`);
+    if (byManufacturer === null) return null;
+    if (byManufacturer.length > 0) return byManufacturer;
+    const all = await this.apiFetch<DatabankFile[]>('/api/databank/files?type=board');
+    if (all === null) return null;
+    return all.filter((f) => f.board_number === boardKey || f.path.split('/')[0] === boardKey);
+  }
+
   /** Resolve once the full file list is present. Awaits an in-flight stream if
    *  one is running, otherwise triggers a fetch. Used by callers that must scan
    *  the whole library (e.g. name-only session entries) now that ensureLoaded()
