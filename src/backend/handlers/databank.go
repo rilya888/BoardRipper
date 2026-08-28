@@ -406,19 +406,22 @@ func (h *DatabankHandler) SetBoardNets(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// resolveBoardKey returns the board key for a file, following the same
-// resolution order as the frontend's filesByBoardKey: board_number takes
-// precedence, with the path's leading directory segment as fallback.
-// For resolved rows, manufacturer is overwritten with the brand, so we cannot
-// rely on it; board_number preserves the library directory name.
+// resolveBoardKey returns the board key for a file by extracting the library
+// directory name from the path. This matches how catalog/assets_importer.py::
+// platform_board_key identifies platforms: by the leading directory segment
+// of the file's path (e.g., "820-01700" from "820-01700/boardview/...").
+// Board_number is kept as a fallback only when the path has no usable leading
+// segment, since board_number may name a different board for daughter-boards
+// filed under their parent's directory (e.g., "820-2223/boardview/820-2299...").
 func resolveBoardKey(file *databank.FileRecord) string {
-	if file.BoardNumber != "" {
-		return file.BoardNumber
-	}
-	// Fallback: first directory segment of the path
+	// First: extract the library directory name (leading path segment)
 	parts := strings.Split(file.Path, "/")
 	if len(parts) > 0 && parts[0] != "" {
 		return parts[0]
+	}
+	// Fallback: board_number when path has no usable segment
+	if file.BoardNumber != "" {
+		return file.BoardNumber
 	}
 	return ""
 }

@@ -188,46 +188,80 @@ func TestBoardNets_EmptyListAccepted(t *testing.T) {
 	}
 }
 
-// TestBoardNets_ResolvedRowBoardKey verifies that board_key in the GET
-// response returns the actual board key (board_number or path segment), not
-// the manufacturer field. For resolved rows, manufacturer is overwritten with
-// the brand (e.g., "Apple"), and the board key survives only in board_number
-// or the path's leading directory.
-func TestBoardNets_ResolvedRowBoardKey(t *testing.T) {
+// TestBoardNets_BoardKeyResolution verifies that board_key in the GET
+// response returns the library directory name (leading path segment), not
+// board_number or manufacturer. The directory name is what catalog/
+// assets_importer.py::platform_board_key produces and what consumers use
+// for platform identification. Board_number may name a different board
+// for daughter-boards filed under their parent's directory.
+func TestBoardNets_BoardKeyResolution(t *testing.T) {
 	h, db, _ := netsTestHandler(t)
 
-	// Create a resolved file: manufacturer is the brand, board_number is
-	// the actual key (library directory name).
-	id, err := db.InsertFile(&databank.FileRecord{
-		Path: "820-01700/boardview/820-01700.bvr", Filename: "820-01700.bvr", Extension: ".bvr",
-		FileType: "board",
-		BoardNumber:      "820-01700",     // the library directory (actual key)
-		Manufacturer:     "Apple",         // brand, overwrites library name when resolved
-		Model:            "MacBook Pro 16\" 2019",
-		ResolutionStatus: "resolved",      // indicates this is a catalog-resolved row
-	})
-	if err != nil {
-		t.Fatalf("InsertFile: %v", err)
+	tests := []struct {
+		name         string
+		path         string
+		boardNumber  string
+		manufacturer string
+		wantBoardKey string
+	}{
+		{
+			name:         "directory and board_number agree",
+			path:         "820-01700/boardview/820-01700.bvr",
+			boardNumber:  "820-01700",
+			manufacturer: "Apple",
+			wantBoardKey: "820-01700",
+		},
+		{
+			name:         "board_number differs from directory (daughter board)",
+			path:         "820-2223/boardview/820-2299 AUDIO board.brd",
+			boardNumber:  "820-2299",
+			manufacturer: "Apple",
+			wantBoardKey: "820-2223", // directory wins
+		},
+		{
+			name:         "empty board_number uses directory",
+			path:         "A2941/boardview/MacBook Air M2 15.3' A2941 PCB layer.pcb",
+			boardNumber:  "",
+			manufacturer: "Apple",
+			wantBoardKey: "A2941",
+		},
 	}
 
-	w := postNets(h, id, `{"nets":["PP3V3_S0"]}`)
-	if w.Code != http.StatusOK {
-		t.Fatalf("POST: code = %d", w.Code)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			id, err := db.InsertFile(&databank.FileRecord{
+				Path:             tt.path,
+				Filename:         "test.brd",
+				Extension:        ".brd",
+				FileType:         "board",
+				BoardNumber:      tt.boardNumber,
+				Manufacturer:     tt.manufacturer,
+				ResolutionStatus: "resolved",
+			})
+			if err != nil {
+				t.Fatalf("InsertFile: %v", err)
+			}
 
-	g := getNets(h, id)
-	if g.Code != http.StatusOK {
-		t.Fatalf("GET: code = %d", g.Code)
-	}
+			w := postNets(h, id, `{"nets":["NET"]}`)
+			if w.Code != http.StatusOK {
+				t.Fatalf("POST: code = %d", w.Code)
+			}
 
-	var getResp struct {
-		BoardKey string `json:"board_key"`
-	}
-	if err := json.Unmarshal(g.Body.Bytes(), &getResp); err != nil {
-		t.Fatalf("decode GET response: %v", err)
-	}
+			g := getNets(h, id)
+			if g.Code != http.StatusOK {
+				t.Fatalf("GET: code = %d", g.Code)
+			}
 
-	if getResp.BoardKey != "820-01700" {
-		t.Errorf("board_key = %q, want 820-01700 (not the brand %q)", getResp.BoardKey, "Apple")
+			var getResp struct {
+				BoardKey string `json:"board_key"`
+			}
+			if err := json.Unmarshal(g.Body.Bytes(), &getResp); err != nil {
+				t.Fatalf("decode GET response: %v", err)
+			}
+
+			if getResp.BoardKey != tt.wantBoardKey {
+				t.Errorf("board_key = %q, want %q", getResp.BoardKey, tt.wantBoardKey)
+			}
+		})
 	}
 }
