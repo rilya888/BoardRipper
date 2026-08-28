@@ -136,7 +136,7 @@ func (db *DB) CompactIfBloated() (before int64, after int64, err error) {
 	return db.Compact()
 }
 
-const schemaVersion = 10
+const schemaVersion = 11
 
 func (db *DB) migrate() error {
 	// Create version table if not exists
@@ -200,6 +200,11 @@ func (db *DB) migrate() error {
 	if ver < 10 {
 		if err := db.migrateV10(); err != nil {
 			return fmt.Errorf("v10: %w", err)
+		}
+	}
+	if ver < 11 {
+		if err := db.migrateV11(); err != nil {
+			return fmt.Errorf("v11: %w", err)
 		}
 	}
 
@@ -586,6 +591,38 @@ func (db *DB) migrateV10() error {
 		return err
 	}
 	if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 10); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// migrateV11 adds board_nets: one row per board file holding the net-name
+// list the frontend submits after parsing a boardview locally (Go never
+// parses board formats — see docs/assistant/ARCHITECTURE.md). One row per
+// file_id keeps resubmission idempotent by construction: an upsert on the
+// primary key replaces the row in place instead of adding a new one, so the
+// table never grows past one row per board file regardless of how many times
+// the same list is resent.
+func (db *DB) migrateV11() error {
+	tx, err := db.writer.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`CREATE TABLE IF NOT EXISTS board_nets (
+		file_id     INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+		nets_json   TEXT    NOT NULL,
+		net_count   INTEGER NOT NULL,
+		received_at INTEGER NOT NULL
+	)`); err != nil {
+		return fmt.Errorf("create board_nets: %w", err)
+	}
+
+	if _, err := tx.Exec(`DELETE FROM schema_version`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES (?)`, 11); err != nil {
 		return err
 	}
 	return tx.Commit()

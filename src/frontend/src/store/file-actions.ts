@@ -80,6 +80,42 @@ export async function loadLibraryBoard(file: DatabankFile, fileObj: File): Promi
   });
 }
 
+/** File ids whose net list has already been sent to the backend this
+ *  session. Guards "once per successful parse" (Block A1 Step 4) — a tab can
+ *  be re-rendered or the same board re-opened many times without resending
+ *  its net list every time. The endpoint is idempotent server-side too (see
+ *  docs/assistant/reports/boardripper-contract.md), so a duplicate POST
+ *  would be harmless, just wasted traffic; this set avoids sending it. */
+const netsSubmitted = new Set<number>();
+
+/** Send a board's already-parsed net-name list to the backend once, right
+ *  after a successful parse (Block A1 Step 4 — `POST
+ *  /api/databank/files/{id}/nets`). Names are forwarded exactly as the
+ *  boardview parser produced them: no case/`_`/`-`/whitespace normalization
+ *  happens here — that responsibility stays in repair-kb per
+ *  docs/assistant/ARCHITECTURE.md. Best-effort: a failure must never block
+ *  or interrupt opening the board, it only leaves the net list unpopulated
+ *  for this file until the next successful open. */
+function submitBoardNetsOnce(fileId: number, nets: Map<string, Net>): void {
+  if (fileId < 0 || netsSubmitted.has(fileId)) return;
+  netsSubmitted.add(fileId);
+  void fetch(`/api/databank/files/${fileId}/nets`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nets: Array.from(nets.keys()) }),
+  })
+    .then((res) => {
+      if (!res.ok) {
+        netsSubmitted.delete(fileId); // allow a retry on the next open
+        log.ui.error(`Failed to submit net list for file ${fileId}: HTTP ${res.status}`);
+      }
+    })
+    .catch((err) => {
+      netsSubmitted.delete(fileId);
+      log.ui.error(`Failed to submit net list for file ${fileId}:`, err);
+    });
+}
+
 /** Open a library file (board or PDF) by its databank file id — the
  *  bridge-callable core of LibraryPanel.handleOpenFile, so the MCP `open_file`
  *  tool can bring a library file into the live view. Boards auto-load their
@@ -103,6 +139,11 @@ export async function openLibraryFileById(
     // The tab's own name, not the clicked file's — a merged .asc board is
     // named after the board, and the panel title has to agree with it.
     if (tabId != null) ensureBoardPanel(tabId, boardStore.activeTab?.fileName ?? fileObj.name);
+    // Board finished parsing and board-store already has its net registry —
+    // hand the list to the backend once (Block A1 Step 4). Not parsed again,
+    // not re-sent on every rerender (see submitBoardNetsOnce).
+    const parsedBoard = boardStore.activeTab?.board;
+    if (parsedBoard) submitBoardNetsOnce(file.id, parsedBoard.nets);
     // Auto-load bound (auto_open) PDFs so "open the board" also brings its schematic.
     const detail = await databankStore.fetchFileDetail(file.id);
     for (const binding of detail?.bindings ?? []) {

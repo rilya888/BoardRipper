@@ -233,6 +233,8 @@ func main() {
 	mux.HandleFunc("GET /api/databank/files/stream", dbHandler.ListFilesStream)
 	mux.HandleFunc("GET /api/databank/files/{id}", read(dbHandler.GetFile))
 	mux.HandleFunc("PATCH /api/databank/files/{id}", write(dbHandler.UpdateFile))
+	mux.HandleFunc("POST /api/databank/files/{id}/nets", write(dbHandler.SetBoardNets))
+	mux.HandleFunc("GET /api/databank/files/{id}/nets", read(dbHandler.GetBoardNets))
 	mux.HandleFunc("GET /api/databank/tree", read(dbHandler.Tree))
 	mux.HandleFunc("POST /api/databank/bindings", write(dbHandler.CreateBinding))
 	mux.HandleFunc("PATCH /api/databank/bindings/{id}", write(dbHandler.UpdateBinding))

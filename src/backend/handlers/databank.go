@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"boardripper/databank"
 )
@@ -351,6 +353,96 @@ func (h *DatabankHandler) GetFile(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// SetBoardNets stores the net-name list a live client parsed for a board
+// file. Body: {"nets": ["PP3V3_S0", "GND", ...]}. Idempotent — resubmitting
+// the same or an updated list for the same file id overwrites the stored
+// list in place; it never creates a duplicate row (see
+// databank.UpsertBoardNets). Names are stored exactly as sent — no
+// normalization (case/`_`/`-`/whitespace) happens on this side; that's
+// repair-kb's responsibility per docs/assistant/ARCHITECTURE.md.
+//
+// POST /api/databank/files/{id}/nets
+func (h *DatabankHandler) SetBoardNets(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+
+	if _, err := h.db.GetFileByID(r.Context(), id); err != nil {
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+
+	// Cap the body before decoding: it decodes into an unbounded []string, so
+	// an unbounded body could amplify into heap. 8 MiB mirrors the
+	// donor-snapshot import cap (ImportDonors) — the closest existing handler
+	// that also decodes an open-ended list into memory, and is generous for
+	// any real board's net count.
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
+	var body struct {
+		Nets []string `json:"nets"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if body.Nets == nil {
+		http.Error(w, "nets is required", http.StatusBadRequest)
+		return
+	}
+
+	receivedAt := time.Now().Unix()
+	if err := h.db.UpsertBoardNets(id, body.Nets, receivedAt); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, map[string]any{
+		"file_id":     id,
+		"net_count":   len(body.Nets),
+		"received_at": receivedAt,
+	})
+}
+
+// GetBoardNets returns the stored net-name list for a board file.
+//
+// GET /api/databank/files/{id}/nets
+//   - 404 when the file id itself doesn't exist in the databank.
+//   - 204 (empty body) when the file exists but no net list has been
+//     submitted for it yet — an expected, common state, not an error.
+//   - 200 with the JSON body below once a list has been submitted.
+func (h *DatabankHandler) GetBoardNets(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+
+	file, err := h.db.GetFileByID(r.Context(), id)
+	if err != nil {
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+
+	rec, err := h.db.GetBoardNets(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, databank.ErrBoardNetsNotFound) {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, map[string]any{
+		"file_id":     rec.FileID,
+		"board_key":   file.Manufacturer,
+		"format":      file.Extension,
+		"nets":        rec.Nets,
+		"received_at": rec.ReceivedAt,
+	})
 }
 
 // UpdateFile updates metadata fields for a file (PATCH).
