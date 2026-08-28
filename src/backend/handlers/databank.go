@@ -406,6 +406,23 @@ func (h *DatabankHandler) SetBoardNets(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// resolveBoardKey returns the board key for a file, following the same
+// resolution order as the frontend's filesByBoardKey: board_number takes
+// precedence, with the path's leading directory segment as fallback.
+// For resolved rows, manufacturer is overwritten with the brand, so we cannot
+// rely on it; board_number preserves the library directory name.
+func resolveBoardKey(file *databank.FileRecord) string {
+	if file.BoardNumber != "" {
+		return file.BoardNumber
+	}
+	// Fallback: first directory segment of the path
+	parts := strings.Split(file.Path, "/")
+	if len(parts) > 0 && parts[0] != "" {
+		return parts[0]
+	}
+	return ""
+}
+
 // GetBoardNets returns the stored net-name list for a board file.
 //
 // GET /api/databank/files/{id}/nets
@@ -438,7 +455,7 @@ func (h *DatabankHandler) GetBoardNets(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, map[string]any{
 		"file_id":     rec.FileID,
-		"board_key":   file.Manufacturer,
+		"board_key":   resolveBoardKey(file),
 		"format":      file.Extension,
 		"nets":        rec.Nets,
 		"received_at": rec.ReceivedAt,

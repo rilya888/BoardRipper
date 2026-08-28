@@ -187,3 +187,47 @@ func TestBoardNets_EmptyListAccepted(t *testing.T) {
 		t.Fatalf("GET after empty POST: code = %d, want 200 (list was submitted, just empty)", g.Code)
 	}
 }
+
+// TestBoardNets_ResolvedRowBoardKey verifies that board_key in the GET
+// response returns the actual board key (board_number or path segment), not
+// the manufacturer field. For resolved rows, manufacturer is overwritten with
+// the brand (e.g., "Apple"), and the board key survives only in board_number
+// or the path's leading directory.
+func TestBoardNets_ResolvedRowBoardKey(t *testing.T) {
+	h, db, _ := netsTestHandler(t)
+
+	// Create a resolved file: manufacturer is the brand, board_number is
+	// the actual key (library directory name).
+	id, err := db.InsertFile(&databank.FileRecord{
+		Path: "820-01700/boardview/820-01700.bvr", Filename: "820-01700.bvr", Extension: ".bvr",
+		FileType: "board",
+		BoardNumber:      "820-01700",     // the library directory (actual key)
+		Manufacturer:     "Apple",         // brand, overwrites library name when resolved
+		Model:            "MacBook Pro 16\" 2019",
+		ResolutionStatus: "resolved",      // indicates this is a catalog-resolved row
+	})
+	if err != nil {
+		t.Fatalf("InsertFile: %v", err)
+	}
+
+	w := postNets(h, id, `{"nets":["PP3V3_S0"]}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("POST: code = %d", w.Code)
+	}
+
+	g := getNets(h, id)
+	if g.Code != http.StatusOK {
+		t.Fatalf("GET: code = %d", g.Code)
+	}
+
+	var getResp struct {
+		BoardKey string `json:"board_key"`
+	}
+	if err := json.Unmarshal(g.Body.Bytes(), &getResp); err != nil {
+		t.Fatalf("decode GET response: %v", err)
+	}
+
+	if getResp.BoardKey != "820-01700" {
+		t.Errorf("board_key = %q, want 820-01700 (not the brand %q)", getResp.BoardKey, "Apple")
+	}
+}
