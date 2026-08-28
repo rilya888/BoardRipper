@@ -59,7 +59,10 @@ export async function openPdfFiles(
 /**
  * Load a library board, pulling in the rest of its `.asc` sections when it is
  * one file of a split Tebo-ICT delivery. Shared by the Library panel and the
- * MCP `open_file` tool so a click and a tool call open the same board.
+ * MCP `open_file` tool so a click and a tool call open the same board — and
+ * therefore also the single choke point for "a library board just finished
+ * parsing" (Block A1 Step 4): both callers land here, so the net-list submit
+ * belongs here, not duplicated in each caller.
  *
  * Announces a merge — quietly opening five files when one was clicked would
  * otherwise look like the app guessed at something.
@@ -78,6 +81,14 @@ export async function loadLibraryBoard(file: DatabankFile, fileObj: File): Promi
       return databankStore.fetchFileBuffer(row, { quiet: true });
     },
   });
+  // Board finished parsing and board-store already has its net registry —
+  // hand the list to the backend once (Block A1 Step 4). Not parsed again,
+  // not re-sent on every rerender (see submitBoardNetsOnce). `file.id` is
+  // the clicked/target file's real databank id (a synthesized -1 id only
+  // ever appears on `.asc` *sibling* rows built above, never on `file`
+  // itself), so this always targets a real row.
+  const parsedBoard = boardStore.activeTab?.board;
+  if (parsedBoard) submitBoardNetsOnce(file.id, parsedBoard.nets);
 }
 
 /** File ids whose net list has already been sent to the backend this
@@ -139,11 +150,6 @@ export async function openLibraryFileById(
     // The tab's own name, not the clicked file's — a merged .asc board is
     // named after the board, and the panel title has to agree with it.
     if (tabId != null) ensureBoardPanel(tabId, boardStore.activeTab?.fileName ?? fileObj.name);
-    // Board finished parsing and board-store already has its net registry —
-    // hand the list to the backend once (Block A1 Step 4). Not parsed again,
-    // not re-sent on every rerender (see submitBoardNetsOnce).
-    const parsedBoard = boardStore.activeTab?.board;
-    if (parsedBoard) submitBoardNetsOnce(file.id, parsedBoard.nets);
     // Auto-load bound (auto_open) PDFs so "open the board" also brings its schematic.
     const detail = await databankStore.fetchFileDetail(file.id);
     for (const binding of detail?.bindings ?? []) {
