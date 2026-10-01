@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { classifyNetName, buildOverview, pageText, searchTextPages } from './mcp-bridge-helpers';
+import { classifyNetName, buildOverview, pageText, searchTextPages, clientIdFromSearch } from './mcp-bridge-helpers';
 
 describe('classifyNetName', () => {
   it('flags auto-generated names as synthetic', () => {
@@ -43,5 +43,16 @@ describe('searchTextPages', () => {
   it('finds a case-insensitive match with page + snippet', () => {
     const m = searchTextPages(PAGES as any, 'usb', 10);
     expect(m).toEqual([{ page: 2, snippet: 'USB connector' }]);
+  });
+});
+
+describe('clientIdFromSearch', () => {
+  it('adopts a 32-hex client id from the deeplink', () => {
+    const id = '0123456789abcdef0123456789abcdef';
+    expect(clientIdFromSearch(`?board=820-01700&client=${id}`)).toBe(id);
+  });
+  it('ignores a missing or malformed client id', () => {
+    for (const s of ['', '?board=X', '?client=XYZ', '?client=0123456789ABCDEF0123456789ABCDEF'])
+      expect(clientIdFromSearch(s)).toBeNull();
   });
 });

@@ -82,3 +82,11 @@ export function searchTextPages(pages: TextItem[][], query: string, limit: numbe
   }
   return out;
 }
+
+/** Per-browser MCP identity handed over in the deeplink (`?client=<32 hex>`):
+ *  an external agent that opened this tab for a specific user pairs on this id
+ *  and then drives only this tab, not whichever tab was focused last. */
+export function clientIdFromSearch(search: string): string | null {
+  const id = new URLSearchParams(search).get('client') ?? '';
+  return /^[0-9a-f]{32}$/.test(id) ? id : null;
+}

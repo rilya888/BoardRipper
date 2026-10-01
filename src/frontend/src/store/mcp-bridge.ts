@@ -11,7 +11,7 @@ import { worklistStore } from './worklist-store';
 import { computeAdjacentNets, type BoardData } from '../parsers/types';
 import { log } from './log-store';
 import { isLiteBuild } from './build-mode';
-import { classifyNetName, buildOverview, pageText, searchTextPages } from './mcp-bridge-helpers';
+import { classifyNetName, buildOverview, pageText, searchTextPages, clientIdFromSearch } from './mcp-bridge-helpers';
 import { renderPdfPageToPng } from './pdf-render';
 import { getActiveApp } from '../renderer/renderer-registry';
 import { openLibraryFileById } from './file-actions';
@@ -56,6 +56,11 @@ function fetchMcpSecret(): Promise<string> {
 export function getMcpClientIdentity(): { id: string; label: string } {
   let id = '';
   try { id = localStorage.getItem('br-mcp-client-id') ?? ''; } catch { /* private mode */ }
+  const fromLink = clientIdFromSearch(location.search);
+  if (fromLink && fromLink !== id) {
+    id = fromLink;
+    try { localStorage.setItem('br-mcp-client-id', id); } catch { /* ignore */ }
+  }
   if (!/^[0-9a-f]{32}$/.test(id)) {
     const b = new Uint8Array(16);
     crypto.getRandomValues(b);
