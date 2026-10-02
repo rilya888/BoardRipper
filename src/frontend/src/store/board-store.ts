@@ -1861,6 +1861,15 @@ class BoardStore extends Emitter {
     saveViewPrefs({ ...loadViewPrefs(), netLineMode: tab.netLineMode, dimMode: tab.dimMode, showHoverInfo: tab.showHoverInfo, followPdf: tab.followPdf });
   }
 
+  /** Turn net lines on (chain) if they are off; leaves any other mode alone. */
+  ensureNetLines() {
+    const tab = this.activeTab;
+    if (!tab || tab.netLineMode !== 'off') return;
+    this.updateActiveTab({ netLineMode: 'chain' });
+    this._saveCurrentViewPrefs();
+    this.notify();
+  }
+
   /** Cycle the net-line visualization: off → star → chain → chain-adjacent → off. */
   cycleNetLineMode() {
     const tab = this.activeTab;

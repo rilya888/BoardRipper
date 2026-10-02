@@ -579,6 +579,9 @@ async function dispatchDrive(op: string, p: any): Promise<any> {
     case 'highlight_net': {
       const board = requireBoard();
       boardStore.highlightNet(p.net);
+      // Assistant flow: fly to the net and join its pins so the master doesn't hunt for it.
+      boardStore.focusNet(p.net);
+      boardStore.ensureNetLines();
       const pins = netPins(board, p.net) ?? [];
       const parts = Array.from(new Set(pins.map((x) => x.part).filter(Boolean)));
       toast(`Agent highlighted net ${p.net}`);
